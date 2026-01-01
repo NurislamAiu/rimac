@@ -1,62 +1,57 @@
 import 'package:flutter/material.dart';
 
-class GlowingMarker extends StatefulWidget {
-  final double size;
+class GlowingMarker extends StatelessWidget {
+  final bool isSelected;
+  final bool isAiGenerated;
 
   const GlowingMarker({
     super.key,
-    required this.size,
+    this.isSelected = false,
+    this.isAiGenerated = false,
   });
 
   @override
-  State<GlowingMarker> createState() => _GlowingMarkerState();
-}
-
-class _GlowingMarkerState extends State<GlowingMarker>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _pulse;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-
-    _pulse = Tween<double>(begin: 0.6, end: 1).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _pulse,
-      builder: (_, __) {
-        return Container(
-          width: widget.size,
-          height: widget.size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.redAccent,
-            boxShadow: [
-              BoxShadow(
-                color: Colors.redAccent.withOpacity(0.6 * _pulse.value),
-                blurRadius: 8 * _pulse.value,
-                spreadRadius: 2 * _pulse.value,
-              ),
-            ],
-          ),
-        );
-      },
+    // AI artifacts are green, others are gold (tertiary color)
+    final baseColor =
+        isAiGenerated ? Colors.greenAccent : Theme.of(context).colorScheme.tertiary;
+
+    return Center(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: isSelected ? 50 : 30,
+        height: isSelected ? 50 : 30,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: baseColor,
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: baseColor.withOpacity(0.8),
+                    blurRadius: 12.0,
+                    spreadRadius: 4.0,
+                  ),
+                  BoxShadow(
+                    color: baseColor.withOpacity(0.6),
+                    blurRadius: 20.0,
+                    spreadRadius: 8.0,
+                  ),
+                ]
+              : [
+                  // Add a subtle shadow even when not selected
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.4),
+                    blurRadius: 4.0,
+                    spreadRadius: 1.0,
+                  )
+                ],
+        ),
+        child: Icon(
+          isAiGenerated ? Icons.computer : Icons.location_on,
+          color: isAiGenerated ? Colors.black87 : Colors.white,
+          size: isSelected ? 25 : 18,
+        ),
+      ),
     );
   }
 }

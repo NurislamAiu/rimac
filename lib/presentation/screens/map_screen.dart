@@ -1,230 +1,224 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-
+import 'package:provider/provider.dart';
 import '../../domain/entities/artifact.dart';
+import '../providers/artifact_provider.dart';
+import '../widgets/artifact_card.dart';
 import '../widgets/glowing_marker.dart';
 
-class MapScreen extends StatelessWidget {
-  MapScreen({super.key});
+class MapScreen extends StatefulWidget {
+  const MapScreen({super.key});
 
-  final List<Artifact> _mockArtifacts = [
-    Artifact(
-      id: '1',
-      name: 'Tutankhamun Mask',
-      lat: 29.9792,
-      lng: 31.1342,
-      period: 'Ancient Egypt',
-      popularity: 95,
-    ),
-    Artifact(
-      id: '2',
-      name: 'Terracotta Army',
-      lat: 34.3848,
-      lng: 109.2734,
-      period: 'Ancient China',
-      popularity: 92,
-    ),
-    Artifact(
-      id: '3',
-      name: 'Machu Picchu',
-      lat: -13.1631,
-      lng: -72.5450,
-      period: 'Inca Civilization',
-      popularity: 88,
-    ),
-    Artifact(
-      id: '4',
-      name: 'Pompeii Ruins',
-      lat: 40.7460,
-      lng: 14.4989,
-      period: 'Roman Empire',
-      popularity: 80,
-    ),
-    Artifact(
-      id: '5',
-      name: 'Stonehenge',
-      lat: 51.1789,
-      lng: -1.8262,
-      period: 'Neolithic',
-      popularity: 85,
-    ),
-  ];
+  @override
+  State<MapScreen> createState() => _MapScreenState();
+}
+
+class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
+  late final MapController _mapController;
+  late final PageController _pageController;
+
+  static const double _carouselHeight = 220.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _mapController = MapController();
+    _pageController = PageController(viewportFraction: 0.85);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final provider = context.read<ArtifactProvider>();
+      provider.addListener(_onProviderInit);
+    });
+  }
+
+  void _onProviderInit() {
+    final provider = context.read<ArtifactProvider>();
+    if (provider.state == ArtifactState.loaded && provider.artifacts.isNotEmpty) {
+      _animatedMapMove(provider.artifacts.first.location, 10.0);
+      provider.removeListener(_onProviderInit);
+    }
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  void _animatedMapMove(LatLng destLocation, double destZoom) {
+    final latTween = Tween<double>(begin: _mapController.camera.center.latitude, end: destLocation.latitude);
+    final lngTween = Tween<double>(begin: _mapController.camera.center.longitude, end: destLocation.longitude);
+    final zoomTween = Tween<double>(begin: _mapController.camera.zoom, end: destZoom);
+
+    final controller = AnimationController(duration: const Duration(milliseconds: 500), vsync: this);
+    final animation = CurvedAnimation(parent: controller, curve: Curves.easeInOut);
+
+    controller.addListener(() {
+      _mapController.move(LatLng(latTween.evaluate(animation), lngTween.evaluate(animation)), zoomTween.evaluate(animation));
+    });
+
+    animation.addStatusListener((status) {
+      if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
+        controller.dispose();
+      }
+    });
+
+    controller.forward();
+  }
+
+  void _onPageChanged(int index, ArtifactProvider provider) {
+    final artifact = provider.artifacts[index];
+    provider.selectArtifact(artifact);
+    _animatedMapMove(artifact.location, 12.0);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
-      body: Stack(
-        children: [
-          FlutterMap(
-            options: const MapOptions(
-              initialCenter: LatLng(20, 0),
-              initialZoom: 2.2,
-              minZoom: 2,
-              maxZoom: 18,
-            ),
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: const Text('Карта сокровищ'),
+        centerTitle: true,
+        backgroundColor: Theme.of(context).colorScheme.background.withOpacity(0.7),
+        elevation: 0,
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+            child: Container(color: Colors.transparent),
+          ),
+        ),
+      ),
+      body: Consumer<ArtifactProvider>(
+        builder: (context, provider, child) {
+          if (provider.state == ArtifactState.loading) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (provider.state == ArtifactState.error) {
+            return const Center(child: Text('Не удалось загрузить данные'));
+          }
+          return Stack(
             children: [
-              TileLayer(
-                urlTemplate:
-                'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.archaeology.map',
-              ),
-              MarkerLayer(
-                markers: _mockArtifacts.map((a) {
-                  final size = _markerSize(a.popularity);
-
-                  return Marker(
-                    point: LatLng(a.lat, a.lng),
-                    width: size * 3,
-                    height: size * 3,
-                    child: GestureDetector(
-                      onTap: () => _openArtifact(context, a),
-                      child: Center(
-                        child: GlowingMarker(size: size),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
+              _buildMap(provider.artifacts, provider.selectedArtifact, isDarkMode),
+              _buildArtifactCarousel(provider),
+              _buildZoomButtons(),
             ],
-          ),
-
-          // 🔝 Glass Top Bar
-          Positioned(
-            top: 32,
-            left: 20,
-            right: 20,
-            child: _GlassTopBar(),
-          ),
-
-          // 🧭 Minimal Legend
-          Positioned(
-            bottom: 24,
-            left: 20,
-            child: _MinimalLegend(),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 
-  double _markerSize(int popularity) {
-    if (popularity >= 90) return 12;
-    if (popularity >= 75) return 10;
-    if (popularity >= 50) return 8;
-    return 6;
+  Widget _buildMap(List<Artifact> artifacts, Artifact? selectedArtifact, bool isDarkMode) {
+    final mapStyleUrl = isDarkMode
+        ? 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png'
+        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+    
+    final realArtifacts = artifacts.where((a) => !a.isAiGenerated).toList();
+    final aiArtifacts = artifacts.where((a) => a.isAiGenerated).toList();
+
+    return FlutterMap(
+      mapController: _mapController,
+      options: MapOptions(
+        initialCenter: artifacts.first.location,
+        initialZoom: 5.0,
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: mapStyleUrl,
+          subdomains: const ['a', 'b', 'c', 'd'],
+        ),
+        CircleLayer(
+          circles: aiArtifacts.map((artifact) {
+            return CircleMarker(
+              point: artifact.location,
+              radius: artifact.searchRadius ?? 1000,
+              useRadiusInMeter: true,
+              color: Colors.green.withOpacity(0.2),
+              borderColor: Colors.green,
+              borderStrokeWidth: 2,
+            );
+          }).toList(),
+        ),
+        MarkerLayer(
+          markers: artifacts.map((artifact) {
+            return Marker(
+              width: 80.0,
+              height: 80.0,
+              point: artifact.location,
+              child: GestureDetector(
+                onTap: () {
+                  final index = artifacts.indexWhere((a) => a.id == artifact.id);
+                  if (index != -1) {
+                    _pageController.animateToPage(
+                      index,
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeInOut,
+                    );
+                  }
+                },
+                child: GlowingMarker(
+                  isSelected: artifact.id == selectedArtifact?.id,
+                  isAiGenerated: artifact.isAiGenerated,
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
   }
 
-  void _openArtifact(BuildContext context, Artifact artifact) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.black,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              artifact.name,
-              style: Theme.of(context)
-                  .textTheme
-                  .headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              artifact.period,
-              style: const TextStyle(color: Colors.redAccent),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Popularity: ${artifact.popularity}',
-              style: const TextStyle(color: Colors.white70),
-            ),
-          ],
+  Widget _buildArtifactCarousel(ArtifactProvider provider) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: SizedBox(
+        height: _carouselHeight,
+        child: PageView.builder(
+          controller: _pageController,
+          itemCount: provider.artifacts.length,
+          onPageChanged: (index) => _onPageChanged(index, provider),
+          itemBuilder: (context, index) {
+            final artifact = provider.artifacts[index];
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
+              child: ArtifactCard(artifact: artifact),
+            );
+          },
         ),
       ),
     );
   }
-}
 
-
-class _GlassTopBar extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: Colors.black.withOpacity(0.45),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Row(
-        children: const [
-          Icon(Icons.public, color: Colors.redAccent),
-          SizedBox(width: 10),
-          Text(
-            'Archaeology Map',
-            style: TextStyle(fontWeight: FontWeight.w600),
+  Widget _buildZoomButtons() {
+    return Positioned(
+      bottom: _carouselHeight + 16,
+      right: 16,
+      child: Column(
+        children: [
+          FloatingActionButton.small(
+            heroTag: "zoom_in_button",
+            onPressed: () {
+              final currentZoom = _mapController.camera.zoom;
+              _animatedMapMove(_mapController.camera.center, currentZoom + 1);
+            },
+            child: const Icon(Icons.add),
           ),
-          Spacer(),
-          Icon(Icons.search, size: 20),
-          SizedBox(width: 14),
-          Icon(Icons.tune, size: 20),
+          const SizedBox(height: 8),
+          FloatingActionButton.small(
+            heroTag: "zoom_out_button",
+            onPressed: () {
+              final currentZoom = _mapController.camera.zoom;
+              _animatedMapMove(_mapController.camera.center, currentZoom - 1);
+            },
+            child: const Icon(Icons.remove),
+          ),
         ],
       ),
     );
   }
 }
-
-class _MinimalLegend extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.45),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: Row(
-        children: const [
-          _LegendDot(size: 12),
-          SizedBox(width: 6),
-          Text('Major'),
-          SizedBox(width: 12),
-          _LegendDot(size: 8),
-          SizedBox(width: 6),
-          Text('Medium'),
-          SizedBox(width: 12),
-          _LegendDot(size: 6),
-          SizedBox(width: 6),
-          Text('Minor'),
-        ],
-      ),
-    );
-  }
-}
-
-class _LegendDot extends StatelessWidget {
-  final double size;
-  const _LegendDot({required this.size});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        color: Colors.redAccent,
-      ),
-    );
-  }
-}
-
-
